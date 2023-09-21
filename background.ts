@@ -1,4 +1,5 @@
 import { Storage } from "@plasmohq/storage"
+import { generateProblem } from "generate"
 
 //Constants
 const LEETCODE_URL = "https://leetcode.com"
@@ -27,138 +28,6 @@ let leetCodeProblem = {
   name: ""
 }
 let lastSubmissionDate = new Date(0)
-
-// Get Problem List from leetcode graphql API
-const getProblemListFromLeetCodeAPI = async (difficulty, problemSet) => {
-  try {
-    const query = `
-      query problemsetQuestionList {
-        problemsetQuestionList: questionList(
-          categorySlug: ""
-          limit: -1
-          skip: 0
-          filters: {
-            ${
-              difficulty && difficulty !== "all"
-                ? "difficulty: " + difficulty
-                : ""
-            }
-            ${problemSet?.length ? "listId: " + '"' + problemSet + '"' : ""}
-          }
-        ) {
-          questions: data {
-            acRate
-            difficulty
-            freqBar
-            frontendQuestionId: questionFrontendId
-            isFavor
-            paidOnly: isPaidOnly
-            status
-            title
-            titleSlug
-            topicTags {
-              name
-              id
-              slug
-            }
-            hasSolution
-            hasVideoSolution
-          }
-        }
-      }
-    `
-
-    const body = {
-      query
-    }
-
-    const response = await fetch("https://leetcode.com/graphql", {
-      method: "POST",
-      body: JSON.stringify(body),
-      headers: {
-        "Content-Type": "application/json"
-      }
-    })
-
-    const responseData = await response.json()
-    await storage.set("permissionsEnabled", true)
-    return responseData.data.problemsetQuestionList.questions
-  } catch (error) {
-    console.log(error.toString())
-    if (
-      error.message.includes("NetworkError") ||
-      error.message.includes("CORS") ||
-      error.message === "Network response was not ok"
-    ) {
-      console.log("CORS error detected.")
-      await storage.set("permissionsEnabled", false)
-    }
-    return undefined
-  }
-}
-
-const generateRandomLeetCodeProblem = async () => {
-  try {
-    const problemSet = (await storage.get("problemSets")) ?? "all"
-    const difficulty = (await storage.get("difficulty")) ?? "all"
-    let leetCodeProblems = []
-    // Check if list is from Leetcode Graphql or all
-    if (problemSet === "all" || problemSet.startsWith("lg")) {
-      await storage.set("loading", true)
-      // Remove lg- or all from string for better logic processing
-      leetCodeProblems = await getProblemListFromLeetCodeAPI(
-        difficulty,
-        problemSet?.slice(3) || ""
-      )
-      let randomIndex = Math.floor(Math.random() * leetCodeProblems.length)
-      while (leetCodeProblems[randomIndex].paidOnly) {
-        randomIndex++
-        randomIndex =
-          (leetCodeProblems.length + randomIndex) % leetCodeProblems.length
-      }
-      const randomProblem = leetCodeProblems[randomIndex]
-      const randomProblemURL =
-        "https://leetcode.com/problems/" +
-        randomProblem.title.replace(/ /g, "-").toLowerCase() +
-        "/"
-      const randomProblemName = randomProblem.title
-      await storage.set("loading", false)
-      return { randomProblemURL, randomProblemName }
-    } else {
-      // TODO: Need to find a way to filter out premium problems for these JSON files
-      const problemSetURLs = {
-        allNeetcode: "leetcode-problems/allProblems.json",
-        NeetCode150: "leetcode-problems/neetCode150Problems.json",
-        Blind75: "leetcode-problems/blind75Problems.json"
-      }
-      const res = await fetch(chrome.runtime.getURL(problemSetURLs[problemSet]))
-      leetCodeProblems = await res.json()
-      if (difficulty !== "all") {
-        leetCodeProblems = leetCodeProblems.filter((problem) => {
-          return problem.difficulty.toLowerCase() === difficulty.toLowerCase()
-        })
-      }
-
-      let randomIndex = Math.floor(Math.random() * leetCodeProblems.length)
-      // If the problem is premium, then skip it and go to the next problem until you find a non-premium problem
-      while (leetCodeProblems[randomIndex].isPremium) {
-        randomIndex++
-        // Prevent index from going out of bounds
-        randomIndex =
-          (leetCodeProblems.length + randomIndex) % leetCodeProblems.length
-      }
-      const randomProblem = leetCodeProblems[randomIndex]
-      const randomProblemURL = randomProblem.href
-      const randomProblemName = randomProblem.text
-      return { randomProblemURL, randomProblemName }
-    }
-  } catch (error) {
-    console.error("Error generating random problem", error)
-    return undefined
-  } finally {
-    await storage.set("loading", false)
-  }
-}
 
 // Communication functions between background.js, popup.js, and content.js
 const onMessageReceived = (message, sender, sendResponse) => {
@@ -221,12 +90,12 @@ async function setRedirectRule(newRedirectUrl: string) {
   }
 }
 export const updateStorage = async () => {
-  const result = await generateRandomLeetCodeProblem()
+  const result = await generateProblem(storage)
 
   if (!result) {
     throw new Error("Error generating random problem")
   } else {
-    const { randomProblemURL, randomProblemName } = result
+    const { url: randomProblemURL, name: randomProblemName } = result
     console.log(
       "Random problem generated:",
       randomProblemName,
